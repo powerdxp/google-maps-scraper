@@ -3,10 +3,7 @@ services:
     name: louisville-scraper
     env: python
     branch: main
-    buildCommand: |
-      pip install -r requirements.txt
-      mkdir -p /app/credentials
-      cp credentials/gcreds.json /app/credentials/gcreds.json
+    buildCommand: pip install -r requirements.txt
     startCommand: python scraper.py
     disk:
       name: credentials-disk
