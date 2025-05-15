@@ -1,49 +1,53 @@
-# scraper.py
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-import time
-import pandas as pd
+import requests
+import csv
 
-def scrape_google_maps(search_query, max_results=50):
-    options = Options()
-    options.add_argument("--headless")  # Run in background
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+API_KEY = "AIzaSyC4bDmD_Kf3o0M2XUvFNBeEgRGCvc91LAI"  # <-- Replace with your actual API key
+LOCATION = "Louisville, KY"
+SEARCH_TERM = "restaurants"
+OUTPUT_FILE = "restaurants_louisville.csv"
 
-    driver = webdriver.Chrome(options=options)
-    driver.get(f"https://www.google.com/maps/search/{search_query}")
+# Google Maps Places API endpoint
+url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
 
-    time.sleep(5)  # Let results load
-    results = []
+params = {
+    "query": f"{SEARCH_TERM} in {LOCATION}",
+    "key": API_KEY
+}
 
-    for _ in range(max_results):
-        listings = driver.find_elements(By.CLASS_NAME, "Nv2PK")
+results = []
+while True:
+    response = requests.get(url, params=params)
+    data = response.json()
 
-        for item in listings:
-            try:
-                name = item.find_element(By.CLASS_NAME, "qBF1Pd").text
-                address = item.find_element(By.CLASS_NAME, "rllt__details.lqhpac div:nth-child(2)").text
-                phone = item.find_element(By.CLASS_NAME, "rllt__details.lqhpac div:nth-child(3)").text
-            except Exception:
-                continue
+    for place in data.get("results", []):
+        name = place.get("name")
+        address = place.get("formatted_address")
+        place_id = place.get("place_id")
 
-            results.append({
-                "Name": name,
-                "Address": address,
-                "Phone": phone
-            })
+        # Optional: get phone number using a details API call
+        details_url = "https://maps.googleapis.com/maps/api/place/details/json"
+        details_params = {
+            "place_id": place_id,
+            "fields": "formatted_phone_number",
+            "key": API_KEY
+        }
+        phone_response = requests.get(details_url, params=details_params).json()
+        phone = phone_response.get("result", {}).get("formatted_phone_number", "")
 
-        # Scroll down
-        driver.execute_script("window.scrollBy(0, 1000);")
-        time.sleep(2)
+        results.append([name, address, phone])
 
-    driver.quit()
+    # Pagination handling
+    if "next_page_token" in data:
+        import time
+        time.sleep(2)  # Wait for token to become active
+        params["pagetoken"] = data["next_page_token"]
+    else:
+        break
 
-    df = pd.DataFrame(results)
-    df.drop_duplicates(inplace=True)
-    df.to_csv("restaurants.csv", index=False)
-    print("Scrape complete. Saved to restaurants.csv")
+# Save results to CSV
+with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as file:
+    writer = csv.writer(file)
+    writer.writerow(["Name", "Address", "Phone"])
+    writer.writerows(results)
 
-if __name__ == "__main__":
-    scrape_google_maps("restaurants in Louisville Kentucky")
+print(f"Saved {len(results)} restaurants to {OUTPUT_FILE}")
