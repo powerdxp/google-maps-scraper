@@ -1,38 +1,66 @@
 import requests
 import time
-import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
-def scrape_google_maps(search_query, max_results=50):
-    options = Options()
-    options.add_argument("--headless")  # Run in background
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+# --- Google Sheets Auth ---
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("/app/credentials/gcreds.json", scope)
+client = gspread.authorize(creds)
 
-    driver = webdriver.Chrome(options=options)
-    driver.get(f"https://www.google.com/maps/search/{search_query}")
+# --- Open Your Sheet ---
+sheet = client.open("Hood Cleaning Leads").worksheet("Louisville, KY")
 
-    time.sleep(5)  # Let results load
-    results = []
+# --- API Setup ---
+API_KEY = "AIzaSyC4bDmD_Kf3o0M2XUvFNBeEgRGCvc91LAI"  # Replace if you ever rotate your key
+LOCATION = "Louisville, KY"
+SEARCH_TERM = "restaurants"
 
-    for _ in range(max_results):
-        listings = driver.find_elements(By.CLASS_NAME, "Nv2PK")
+url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+params = {
+    "query": f"{SEARCH_TERM} in {LOCATION}",
+    "key": API_KEY
+}
 
-        for item in listings:
-            try:
-                name = item.find_element(By.CLASS_NAME, "qBF1Pd").text
-                address = item.find_element(By.CLASS_NAME, "rllt__details.lqhpac div:nth-child(2)").text
-                phone = item.find_element(By.CLASS_NAME, "rllt__details.lqhpac div:nth-child(3)").text
-            except Exception:
-                continue
+# --- Scrape + Send ---
+print("Starting scrape...")
 
-            results.append({
-                "Name": name,
-                "Address": address,
-                "Phone": phone
-            })
+seen = set()
+while True:
+    response = requests.get(url, params=params)
+    data = response.json()
 
-        # Scroll down
-        driver.execute_script("window.scrollBy(0, 1000);")
+    for place in data.get("results", []):
+        name = place.get("name", "")
+        address = place.get("formatted_address", "")
+        place_id = place.get("place_id", "")
+
+        # Get phone number
+        phone_url = "https://maps.googleapis.com/maps/api/place/details/json"
+        phone_params = {
+            "place_id": place_id,
+            "fields": "formatted_phone_number",
+            "key": API_KEY
+        }
+        phone_data = requests.get(phone_url, params=phone_params).json()
+        phone = phone_data.get("result", {}).get("formatted_phone_number", "")
+
+        # Check for duplicates
+        if (name, address) in seen:
+            continue
+        seen.add((name, address))
+
+        # Parse city/state/zip
+        city = "Louisville"
+        state = "KY"
+        zip_code = ""
+
+        # Sheet Format
+        row = [name, phone, address, city, state, zip_code, "", "", ""]
+        sheet.append_row(row)
+        print(f"✅ Added: {name}")
+
+    if "next_page_token" in data:
         time.sleep(2)
         params["pagetoken"] = data["next_page_token"]
     else:
